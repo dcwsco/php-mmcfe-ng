@@ -15,13 +15,14 @@ class Statistics {
   private $table = 'statistics_shares';
   private $getcache = true;
 
-  public function __construct($debug, $mysqli, $config, $share, $user, $block, $memcache) {
+  public function __construct($debug, $mysqli, $config, $share, $user, $block, $transaction, $memcache) {
     $this->debug = $debug;
     $this->mysqli = $mysqli;
     $this->share = $share;
     $this->config = $config;
     $this->user = $user;
     $this->block = $block;
+    $this->transaction = $transaction;
     $this->memcache = $memcache;
     $this->debug->append("Instantiated Share class", 2);
   }
@@ -122,6 +123,34 @@ class Statistics {
   }
 
   /**
+   * Fetch lifetime shares for one user or everyone
+   * @param account_id int Account ID or 0 for everyone
+   * @param limit int Limit the result set to the top limit
+   * @return data array DB Fields in array
+   **/
+  public function getLifetimeShares($account_id=0, $limit=15) {
+    $this->debug->append("STA " . __METHOD__, 4);
+    if ($data = $this->memcache->get(__FUNCTION__ . $account_id)) return $data;
+    if ($account_id == 0) {
+      $stmt = $this->mysqli->prepare("
+        SELECT a.id, a.username, IFNULL(SUM(valid), 0) AS valid, IFNULL(SUM(invalid), 0) AS invalid
+        FROM $this->table AS s
+        LEFT JOIN " . $this->user->getTableName() . " AS a
+        ON s.account_id = a.id
+        GROUP BY account_id
+        ORDER BY valid DESC
+        LIMIT $limit");
+      if ($this->checkStmt($stmt) && $stmt->execute() && $result = $stmt->get_result() ) return $this->memcache->setCache(__FUNCTION__ . $account_id, $result->fetch_all(MYSQLI_ASSOC));
+    } else {
+      $stmt = $this->mysqli->prepare("SELECT account_id, IFNULL(SUM(valid), 0) AS valid, IFNULL(SUM(invalid), 0) AS invalid FROM $this->table WHERE account_id = ?");
+      if ($this->checkStmt($stmt) && $stmt->bind_param('i', $account_id) && $stmt->execute() && $result = $stmt->get_result() ) return $this->memcache->setCache(__FUNCTION__ . $account_id, $result->fetch_assoc());
+    }
+    // Catchall
+    $this->debug->append("Failed to get past shares: " . $this->mysqli->error);
+    return false;
+  }
+
+  /**
    * Same as getCurrentHashrate but for Shares
    * @param none
    * @return data object Our share rate in shares per second
@@ -178,7 +207,8 @@ class Statistics {
       FROM " . $this->share->getTableName() . " AS s,
            " . $this->user->getTableName() . " AS u
       WHERE u.username = SUBSTRING_INDEX( s.username, '.', 1 )
-        AND UNIX_TIMESTAMP(s.time) >IFNULL((SELECT MAX(b.time) FROM " . $this->block->getTableName() . " AS b),0)
+      AND UNIX_TIMESTAMP(s.time) >IFNULL((SELECT MAX(b.time)
+      FROM " . $this->block->getTableName() . " AS b),0)
       GROUP BY u.id");
     if ($stmt && $stmt->execute() && $result = $stmt->get_result())
       return $this->memcache->setCache(__FUNCTION__, $result->fetch_all(MYSQLI_ASSOC));
@@ -228,12 +258,12 @@ class Statistics {
         a.username AS username,
         a.donate_percent AS donate_percent,
         a.email AS email,
-      	COUNT(s.id) AS shares
+        COUNT(s.id) AS shares
       FROM " . $this->user->getTableName() . " AS a
       LEFT JOIN " . $this->share->getTableName() . " AS s
       ON a.username = SUBSTRING_INDEX( s.username, '.', 1 )
       WHERE
-      	a.username LIKE ?
+        a.username LIKE ?
       GROUP BY username
       ORDER BY username");
     if ($this->checkStmt($stmt) && $stmt->bind_param('s', $filter) && $stmt->execute() && $result = $stmt->get_result()) {
@@ -251,21 +281,22 @@ class Statistics {
     if ($data = $this->memcache->get(__FUNCTION__ . $account_id)) return $data;
     $stmt = $this->mysqli->prepare("
       SELECT
-        (
-          SELECT IFNULL(ROUND(COUNT(s.id) * POW(2, " . $this->config['difficulty'] . ") / 600 / 1000), 0) AS hashrate
-          FROM " . $this->share->getTableName() . " AS s,
-               " . $this->user->getTableName() . " AS u
-          WHERE u.username = SUBSTRING_INDEX( s.username, '.', 1 )
-            AND s.time > DATE_SUB(now(), INTERVAL 10 MINUTE)
-            AND u.id = ?
-        ) + (
-          SELECT IFNULL(ROUND(COUNT(s.id) * POW(2, " . $this->config['difficulty'] . ") / 600 / 1000), 0) AS hashrate
-          FROM " . $this->share->getArchiveTableName() . " AS s,
-               " . $this->user->getTableName() . " AS u
-          WHERE u.username = SUBSTRING_INDEX( s.username, '.', 1 )
-            AND s.time > DATE_SUB(now(), INTERVAL 10 MINUTE)
-            AND u.id = ?
-        ) AS hashrate
+      (
+        SELECT
+          IFNULL(ROUND(COUNT(s.id) * POW(2, " . $this->config['difficulty'] . ") / 600 / 1000), 0) AS hashrate
+        FROM " . $this->share->getTableName() . " AS s,
+             " . $this->user->getTableName() . " AS u
+        WHERE u.username = SUBSTRING_INDEX( s.username, '.', 1 )
+          AND s.time > DATE_SUB(now(), INTERVAL 10 MINUTE)
+          AND u.id = ?
+      ) + (
+        SELECT IFNULL(ROUND(COUNT(s.id) * POW(2, " . $this->config['difficulty'] . ") / 600 / 1000), 0) AS hashrate
+        FROM " . $this->share->getArchiveTableName() . " AS s,
+             " . $this->user->getTableName() . " AS u
+        WHERE u.username = SUBSTRING_INDEX( s.username, '.', 1 )
+          AND s.time > DATE_SUB(now(), INTERVAL 10 MINUTE)
+          AND u.id = ?
+      ) AS hashrate
       FROM DUAL");
     if ($this->checkStmt($stmt) && $stmt->bind_param("ii", $account_id, $account_id) && $stmt->execute() && $result = $stmt->get_result() )
       return $this->memcache->setCache(__FUNCTION__ . $account_id, $result->fetch_object()->hashrate);
@@ -283,7 +314,8 @@ class Statistics {
     $this->debug->append("STA " . __METHOD__, 4);
     if ($data = $this->memcache->get(__FUNCTION__ . $account_id)) return $data;
     $stmt = $this->mysqli->prepare("
-      SELECT COUNT(s.id)/600 AS sharerate
+      SELECT
+        COUNT(s.id)/600 AS sharerate
       FROM " . $this->share->getTableName() . " AS s,
            " . $this->user->getTableName() . " AS u
       WHERE u.username = SUBSTRING_INDEX( s.username, '.', 1 )
@@ -413,6 +445,9 @@ class Statistics {
     return false;
   }
 
+  public function getLifetimeEarnings($account_id=0) {
+  }
+
   /**
    * get Hourly hashrate for the pool 
    * @param none
@@ -449,4 +484,4 @@ class Statistics {
   }
 }
 
-$statistics = new Statistics($debug, $mysqli, $config, $share, $user, $block, $memcache);
+$statistics = new Statistics($debug, $mysqli, $config, $share, $user, $block, $transaction, $memcache);

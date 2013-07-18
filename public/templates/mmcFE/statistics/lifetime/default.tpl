@@ -24,8 +24,8 @@
       <tr style="background-color:#99EB99;">
         <td class="center">n/a</td>
         <td class="left">{$GLOBAL.userdata.username}</td>
-        <td class="right">{$LIFETIMESHARES[user].valid}</td>
-        <td class="right">{$LIFETIMESHARES[user].invalid}</td>
+        <td class="right">{$YOURLIFETIMESHARES.valid}</td>
+        <td class="right">{$YOURLIFETIMESHARES.invalid}</td>
       </tr>
 {/if}
     </tbody>

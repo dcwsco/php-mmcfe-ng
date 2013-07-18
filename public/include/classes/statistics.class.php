@@ -133,17 +133,32 @@ class Statistics {
     if ($data = $this->memcache->get(__FUNCTION__ . $account_id)) return $data;
     if ($account_id == 0) {
       $stmt = $this->mysqli->prepare("
-        SELECT a.id, a.username, IFNULL(SUM(valid), 0) AS valid, IFNULL(SUM(invalid), 0) AS invalid
+        SELECT
+          a.id,
+          a.username,
+          IFNULL(SUM(valid), 0) AS valid,
+          IFNULL(SUM(invalid), 0) AS invalid
         FROM $this->table AS s
         LEFT JOIN " . $this->user->getTableName() . " AS a
         ON s.account_id = a.id
         GROUP BY account_id
         ORDER BY valid DESC
         LIMIT $limit");
-      if ($this->checkStmt($stmt) && $stmt->execute() && $result = $stmt->get_result() ) return $this->memcache->setCache(__FUNCTION__ . $account_id, $result->fetch_all(MYSQLI_ASSOC));
+      if ($this->checkStmt($stmt) && $stmt->execute() && $result = $stmt->get_result() )
+        return $this->memcache->setCache(__FUNCTION__ . $account_id, $result->fetch_all(MYSQLI_ASSOC));
     } else {
-      $stmt = $this->mysqli->prepare("SELECT account_id, IFNULL(SUM(valid), 0) AS valid, IFNULL(SUM(invalid), 0) AS invalid FROM $this->table WHERE account_id = ?");
-      if ($this->checkStmt($stmt) && $stmt->bind_param('i', $account_id) && $stmt->execute() && $result = $stmt->get_result() ) return $this->memcache->setCache(__FUNCTION__ . $account_id, $result->fetch_assoc());
+      $stmt = $this->mysqli->prepare("
+        SELECT
+          a.id,
+          a.username,
+          IFNULL(SUM(valid), 0) AS valid,
+          IFNULL(SUM(invalid), 0) AS invalid
+        FROM $this->table AS s
+        RIGHT JOIN " . $this->user->getTableName() . " AS a
+        ON s.account_id = a.id
+        WHERE s.account_id = ?");
+      if ($this->checkStmt($stmt) && $stmt->bind_param('i', $account_id) && $stmt->execute() && $result = $stmt->get_result() )
+        return $this->memcache->setCache(__FUNCTION__ . $account_id, $result->fetch_assoc());
     }
     // Catchall
     $this->debug->append("Failed to get past shares: " . $this->mysqli->error);
@@ -443,9 +458,6 @@ class Statistics {
     // Catchall
     $this->debug->append("Failed to fetch hourly hashrate: " . $this->mysqli->error);
     return false;
-  }
-
-  public function getLifetimeEarnings($account_id=0) {
   }
 
   /**

@@ -5,7 +5,7 @@ if (!defined('SECURITY')) die('Hacking attempt');
 
 // Top Lifetime Shares
 $aLifetimeShares = $statistics->getLifetimeShares();
-$aYourLifetimeShares = $statistics->getLifetimeShares($_SESSION['USERDATA']['id']);
+$aYourLifetimeShares = $statistics->getLifetimeShares($_SESSION['USERDATA']['id'], 1);
 
 // Propagate content our template
 $smarty->assign("LIFETIMESHARES", $aLifetimeShares);
